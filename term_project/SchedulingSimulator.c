@@ -34,7 +34,6 @@ typedef struct {
     Process** waiting_queue; // 대기 큐 (WAITING 상태 프로세스)
     int waiting_queue_size;
     int waiting_queue_capacity;
-
     // 기타 시스템 관련 설정 추가 가능 (예: CPU 코어 개수 등)
 } SystemConfig;
 
