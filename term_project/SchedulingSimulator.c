@@ -1,45 +1,56 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#define INITIAL_READY_QUEUE_CAPACITY 10
-#define INITIAL_WAITING_QUEUE_CAPACITY 5
+#include <string.h>
+
+#define INITIAL_READY_QUEUE_CAPACITY 10  // 초기 준비 큐 용량
+#define INITIAL_WAITING_QUEUE_CAPACITY 5 // 초기 대기 큐 용량
+#define MAX_IO_REQUESTS 3                // 최대 I/O 요청 수
+#define TIME_QUANTUM 3                   // 라운드 로빈 타임 퀀텀
 
 // 프로세스 상태 열거형
 typedef enum {
     NEW,        // 생성됨
-    READY,      // 실행 준비 완료
+    READY,      // 실행 준비됨
     RUNNING,    // 실행 중
     WAITING,    // I/O 대기 중
     TERMINATED  // 종료됨
 } ProcessState;
 
-// 프로세스 정보를 저장할 구조체
+// 프로세스 구조체 (다중 I/O 요청 지원)
 typedef struct {
-    int id;             // 프로세스 ID
-    int arrival_time;   // 도착 시간
-    int cpu_burst_time; // CPU 버스트 시간
-    int priority;       // 우선순위 (낮은 숫자가 높은 우선순위)
-    int io_burst_time;  // I/O 버스트 시간 (0이면 I/O 없음)
-    int io_request_time; // I/O 요청 시간 (CPU 버스트 중 I/O가 발생하는 시점)
-    ProcessState state; // 현재 상태
-    // 실제 시뮬레이션에 필요한 다른 필드 추가 가능 (예: 남은 CPU 버스트 시간, 남은 I/O 버스트 시간 등)
+    int id;                             // 프로세스 ID
+    int arrival_time;                   // 도착 시간
+    int cpu_burst_time;                 // 총 CPU 버스트 시간
+    int priority;                       // 우선순위 (숫자가 클수록 높은 우선순위)
+
+    int num_io_requests;                // I/O 요청 횟수
+    int io_burst_time[MAX_IO_REQUESTS]; // 각 I/O의 버스트 시간
+    int io_request_time[MAX_IO_REQUESTS]; // 각 I/O 요청 시점 (CPU 사용 시간 기준)
+
+    int remaining_cpu_time;             // 남은 CPU 시간
+    int io_index;                       // 현재 I/O 요청 인덱스
+    int io_remaining_time;             // 현재 I/O 남은 시간
+    int last_executed_time;            // 마지막 실행 시간 (선점형 고려)
+    int start_time;                    // 첫 실행 시간
+    int completion_time;               // 완료 시간
+
+    ProcessState state;                 // 현재 프로세스 상태
 } Process;
 
-// 시스템 환경 설정을 위한 구조체
+// 시스템 환경 구조체
 typedef struct {
-    Process** ready_queue;  // 준비 큐 (READY 상태 프로세스)
+    Process** ready_queue;
     int ready_queue_size;
     int ready_queue_capacity;
 
-    Process** waiting_queue; // 대기 큐 (WAITING 상태 프로세스)
+    Process** waiting_queue;
     int waiting_queue_size;
     int waiting_queue_capacity;
-    // 기타 시스템 관련 설정 추가 가능 (예: CPU 코어 개수 등)
 } SystemConfig;
 
 // 프로세스 생성 함수
-// num_processes: 생성할 프로세스 개수
-Process* create_process(int id, int max_arrival_time, int max_cpu_burst, int max_priority, int max_io_burst, int max_io_request_offset) {
+Process* create_process(int id, int max_arrival_time, int max_cpu_burst, int max_priority, int max_io_burst) {
     Process* new_process = (Process*)malloc(sizeof(Process));
     if (new_process == NULL) {
         perror("프로세스 메모리 할당 실패");
@@ -47,40 +58,32 @@ Process* create_process(int id, int max_arrival_time, int max_cpu_burst, int max
     }
 
     new_process->id = id;
-    // 도착 시간: 0부터 max_arrival_time 사이의 랜덤 값
     new_process->arrival_time = rand() % (max_arrival_time + 1);
-    // CPU 버스트 시간: 1부터 max_cpu_burst 사이의 랜덤 값
     new_process->cpu_burst_time = (rand() % max_cpu_burst) + 1;
-    // 우선순위: 0부터 max_priority 사이의 랜덤 값 (낮은 숫자가 높은 우선순위)
     new_process->priority = rand() % (max_priority + 1);
+    new_process->state = NEW;
 
-    // I/O 발생 여부 및 시간 랜덤 설정 (예: 30% 확률로 I/O 발생)
-    if (rand() % 100 < 30) {
-        // I/O 버스트 시간: 1부터 max_io_burst 사이의 랜덤 값
-        new_process->io_burst_time = (rand() % max_io_burst) + 1;
-        // I/O 요청 시간: CPU 버스트 시간 내에서 랜덤하게 설정
-        // I/O 요청 시간은 0보다 크고 CPU 버스트 시간보다 작아야 함
-        if (new_process->cpu_burst_time > 1) {
-            new_process->io_request_time = rand() % (new_process->cpu_burst_time - 1) + 1;
-        }
-        else {
-            // CPU 버스트 시간이 1이면 I/O 발생 어려움, 0으로 설정
-            new_process->io_burst_time = 0;
-            new_process->io_request_time = 0;
-        }
+    new_process->remaining_cpu_time = new_process->cpu_burst_time;
+    new_process->io_index = 0;
+    new_process->io_remaining_time = 0;
+    new_process->last_executed_time = -1;
+    new_process->start_time = -1;
+    new_process->completion_time = -1;
 
+    new_process->num_io_requests = rand() % (MAX_IO_REQUESTS + 1);
+    for (int i = 0; i < new_process->num_io_requests; i++) {
+        new_process->io_burst_time[i] = (rand() % max_io_burst) + 1;
+        int request_time;
+        do {
+            request_time = rand() % new_process->cpu_burst_time;
+        } while (request_time == 0 || request_time >= new_process->cpu_burst_time);
+        new_process->io_request_time[i] = request_time;
     }
-    else {
-        new_process->io_burst_time = 0;
-        new_process->io_request_time = 0;
-    }
-
-    new_process->state = NEW; // 초기 상태는 NEW
 
     return new_process;
 }
 
-// 시스템 환경 설정 함수 (큐 용량은 #define으로 정의)
+// 시스템 환경 설정 함수
 SystemConfig* config() {
     SystemConfig* config = (SystemConfig*)malloc(sizeof(SystemConfig));
     if (config == NULL) {
@@ -88,28 +91,25 @@ SystemConfig* config() {
         return NULL;
     }
 
-    // 준비 큐 초기화 (#define으로 정의된 용량 사용)
     config->ready_queue_capacity = INITIAL_READY_QUEUE_CAPACITY;
     config->ready_queue_size = 0;
     config->ready_queue = (Process**)malloc(config->ready_queue_capacity * sizeof(Process*));
     if (config->ready_queue == NULL) {
         perror("준비 큐 메모리 할당 실패");
-        free(config); // config 구조체 메모리 해제
+        free(config);
         return NULL;
     }
 
-    // 대기 큐 초기화 (#define으로 정의된 용량 사용)
     config->waiting_queue_capacity = INITIAL_WAITING_QUEUE_CAPACITY;
     config->waiting_queue_size = 0;
     config->waiting_queue = (Process**)malloc(config->waiting_queue_capacity * sizeof(Process*));
     if (config->waiting_queue == NULL) {
         perror("대기 큐 메모리 할당 실패");
-        free(config->ready_queue); // 준비 큐 메모리 해제
-        free(config); // config 구조체 메모리 해제
+        free(config->ready_queue);
+        free(config);
         return NULL;
     }
 
-    // 랜덤 시드 초기화 (시간 기반)
     srand(time(NULL));
 
     printf("시스템 환경 설정 완료.\n");
@@ -118,6 +118,15 @@ SystemConfig* config() {
 
     return config;
 }
+
+// Gantt Chart 출력을 위한 구조체 정의
+typedef struct {
+    int time;
+    int pid;
+} GanttUnit;
+
+// schedule 함수 선언 (구현은 이후에 계속 작성)
+void schedule(Process** processes, int num_processes, SystemConfig* system, const char* algorithm, int preemptive);
 
 // 예시 사용법 (main 함수는 포함하지 않음, 함수 사용 예시)
 /*
