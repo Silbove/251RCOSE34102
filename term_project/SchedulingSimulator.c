@@ -1,171 +1,571 @@
-#include <stdio.h>
+#include <stdio.h> 
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
 
-#define INITIAL_READY_QUEUE_CAPACITY 10  // ì´ˆê¸° ì¤€ë¹„ í ìš©ëŸ‰
-#define INITIAL_WAITING_QUEUE_CAPACITY 5 // ì´ˆê¸° ëŒ€ê¸° í ìš©ëŸ‰
-#define MAX_IO_REQUESTS 3                // ìµœëŒ€ I/O ìš”ì²­ ìˆ˜
-#define TIME_QUANTUM 3                   // ë¼ìš´ë“œ ë¡œë¹ˆ íƒ€ì„ í€€í…€
+#define INITIAL_READY_QUEUE_CAPACITY 10 // ÃÊ±â ÁØºñ Å¥ ¿ë·®
+#define INITIAL_WAITING_QUEUE_CAPACITY 5 // ÃÊ±â ´ë±â Å¥ ¿ë·® (´õ ÀÌ»ó »ç¿ëµÇÁö ¾ÊÀ½)
+// #define MAX_IO_REQUESTS 3 // ÇÁ·Î¼¼½º´ç ÃÖ´ë I/O ¿äÃ» ¼ö (Á¦°ÅµÊ)
+#define TIME_QUANTUM 3 // ¶ó¿îµå ·Îºó ½Ã°£ ÇÒ´ç·®
 
-// í”„ë¡œì„¸ìŠ¤ ìƒíƒœ ì—´ê±°í˜•
+// ÇÁ·Î¼¼½º »óÅÂ Á¤ÀÇ
 typedef enum {
-    NEW,        // ìƒì„±ë¨
-    READY,      // ì‹¤í–‰ ì¤€ë¹„ë¨
-    RUNNING,    // ì‹¤í–‰ ì¤‘
-    WAITING,    // I/O ëŒ€ê¸° ì¤‘
-    TERMINATED  // ì¢…ë£Œë¨
+    NEW, // »õ·Î »ı¼ºµÊ
+    READY, // ½ÇÇà ÁØºñ ¿Ï·á
+    RUNNING, // CPU¿¡¼­ ½ÇÇà Áß
+    // WAITING, // I/O ´ë±â Áß (Á¦°ÅµÊ)
+    TERMINATED // ½ÇÇà ¿Ï·á
 } ProcessState;
 
-// í”„ë¡œì„¸ìŠ¤ êµ¬ì¡°ì²´ (ë‹¤ì¤‘ I/O ìš”ì²­ ì§€ì›)
+// ÇÁ·Î¼¼½º ±¸Á¶Ã¼ Á¤ÀÇ
 typedef struct {
-    int id;                             // í”„ë¡œì„¸ìŠ¤ ID
-    int arrival_time;                   // ë„ì°© ì‹œê°„
-    int cpu_burst_time;                 // ì´ CPU ë²„ìŠ¤íŠ¸ ì‹œê°„
-    int priority;                       // ìš°ì„ ìˆœìœ„ (ìˆ«ìê°€ í´ìˆ˜ë¡ ë†’ì€ ìš°ì„ ìˆœìœ„)
+    int id; // ÇÁ·Î¼¼½º ID
+    int arrival_time; // µµÂø ½Ã°£
+    int cpu_burst_time; // ÃÑ CPU ¹ö½ºÆ® ½Ã°£
+    int priority; // ¿ì¼±¼øÀ§
 
-    int num_io_requests;                // I/O ìš”ì²­ íšŸìˆ˜
-    int io_burst_time[MAX_IO_REQUESTS]; // ê° I/Oì˜ ë²„ìŠ¤íŠ¸ ì‹œê°„
-    int io_request_time[MAX_IO_REQUESTS]; // ê° I/O ìš”ì²­ ì‹œì  (CPU ì‚¬ìš© ì‹œê°„ ê¸°ì¤€)
+    // I/O °ü·Ã ÇÊµå Á¦°ÅµÊ
+    // int num_io_requests; 
+    // int io_burst_time[MAX_IO_REQUESTS];
+    // int io_request_time[MAX_IO_REQUESTS];
 
-    int remaining_cpu_time;             // ë‚¨ì€ CPU ì‹œê°„
-    int io_index;                       // í˜„ì¬ I/O ìš”ì²­ ì¸ë±ìŠ¤
-    int io_remaining_time;             // í˜„ì¬ I/O ë‚¨ì€ ì‹œê°„
-    int last_executed_time;            // ë§ˆì§€ë§‰ ì‹¤í–‰ ì‹œê°„ (ì„ ì í˜• ê³ ë ¤)
-    int start_time;                    // ì²« ì‹¤í–‰ ì‹œê°„
-    int completion_time;               // ì™„ë£Œ ì‹œê°„
+    int remaining_cpu_time; // ³²Àº CPU ½ÇÇà ½Ã°£
+    // int io_index; // ÇöÀç Ã³¸® ÁßÀÎ I/O ¿äÃ» ÀÎµ¦½º (Á¦°ÅµÊ)
+    // int io_remaining_time; // ³²Àº I/O ½Ã°£ (Á¦°ÅµÊ)
+    int last_executed_time; // ¸¶Áö¸·À¸·Î CPU¸¦ ÇÒ´ç¹ŞÀº ½Ã°£ (ÇöÀç ÄÚµå¿¡¼­´Â »ç¿ëµÇÁö ¾ÊÀ½)
+    int start_time; // ÇÁ·Î¼¼½º°¡ Ã³À½ CPU¸¦ ÇÒ´ç¹ŞÀº ½Ã°£
+    int completion_time; // ¿Ï·á ½Ã°£
 
-    ProcessState state;                 // í˜„ì¬ í”„ë¡œì„¸ìŠ¤ ìƒíƒœ
+    ProcessState state; // ÇöÀç ÇÁ·Î¼¼½º »óÅÂ
 } Process;
 
-// ì‹œìŠ¤í…œ í™˜ê²½ êµ¬ì¡°ì²´
+// ½Ã½ºÅÛ Å¥ ±¸¼º ±¸Á¶Ã¼ (ÇöÀç schedule ÇÔ¼ö¿¡¼­ Á÷Á¢ »ç¿ëµÇÁö ¾ÊÀ½)
 typedef struct {
-    Process** ready_queue;
-    int ready_queue_size;
-    int ready_queue_capacity;
+    Process** ready_queue; // ÁØºñ Å¥ (ÇÁ·Î¼¼½º Æ÷ÀÎÅÍ ¹è¿­)
+    int ready_queue_size; // ÁØºñ Å¥ ÇöÀç Å©±â
+    int ready_queue_capacity; // ÁØºñ Å¥ ¿ë·®
 
-    Process** waiting_queue;
-    int waiting_queue_size;
-    int waiting_queue_capacity;
+    // Waiting Queue °ü·Ã ÇÊµå Á¦°ÅµÊ
+    // Process** waiting_queue; 
+    // int waiting_queue_size;
+    // int waiting_queue_capacity;
 } SystemConfig;
 
-// í”„ë¡œì„¸ìŠ¤ ìƒì„± í•¨ìˆ˜
-Process* create_process(int id, int max_arrival_time, int max_cpu_burst, int max_priority, int max_io_burst) {
+// Àü¿ª º¯¼ö (config() ÇÔ¼ö¿¡ ÀÇÇØ ¼³Á¤µÉ ½Ã¹Ä·¹ÀÌ¼Ç ¸Å°³º¯¼ö)
+int num_processes_global = 0; // ÀüÃ¼ ÇÁ·Î¼¼½º ¼ö
+int max_arrival_time_global = 0; // ÃÖ´ë µµÂø ½Ã°£
+int max_cpu_burst_global = 0; // ÃÖ´ë CPU ¹ö½ºÆ® ½Ã°£
+int max_priority_global = 0; // ÃÖ´ë ¿ì¼±¼øÀ§
+// int max_io_burst_global = 0; // ÃÖ´ë I/O ¹ö½ºÆ® ½Ã°£ (Á¦°ÅµÊ)
+
+
+// »õ·Î¿î ÇÁ·Î¼¼½º »ı¼º
+Process* create_process(int id, int max_arrival_time, int max_cpu_burst, int max_priority /*, int max_io_burst Á¦°ÅµÊ */) {
     Process* new_process = (Process*)malloc(sizeof(Process));
-    if (new_process == NULL) {
-        perror("í”„ë¡œì„¸ìŠ¤ ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
-        return NULL;
-    }
+    if (!new_process) return NULL; // ¸Ş¸ğ¸® ÇÒ´ç ½ÇÆĞ ½Ã NULL ¹İÈ¯
 
     new_process->id = id;
-    new_process->arrival_time = rand() % (max_arrival_time + 1);
-    new_process->cpu_burst_time = (rand() % max_cpu_burst) + 1;
-    new_process->priority = rand() % (max_priority + 1);
-    new_process->state = NEW;
+    new_process->arrival_time = rand() % (max_arrival_time + 1); // 0ºÎÅÍ max_arrival_time±îÁö ·£´ı »ı¼º
+    new_process->cpu_burst_time = (rand() % max_cpu_burst) + 1; // 1ºÎÅÍ max_cpu_burst±îÁö ·£´ı »ı¼º
+    new_process->priority = rand() % (max_priority + 1); // 0ºÎÅÍ max_priority±îÁö ·£´ı »ı¼º (³·Àº ¼ıÀÚ°¡ ³ôÀº ¿ì¼±¼øÀ§)
+    new_process->state = NEW; // ÃÊ±â »óÅÂ´Â NEW
 
-    new_process->remaining_cpu_time = new_process->cpu_burst_time;
-    new_process->io_index = 0;
-    new_process->io_remaining_time = 0;
-    new_process->last_executed_time = -1;
-    new_process->start_time = -1;
-    new_process->completion_time = -1;
+    new_process->remaining_cpu_time = new_process->cpu_burst_time; // ³²Àº CPU ½Ã°£ ÃÊ±âÈ­
+    // I/O °ü·Ã ÇÊµå ÃÊ±âÈ­ Á¦°ÅµÊ
+    // new_process->io_index = 0; 
+    // new_process->io_remaining_time = 0; 
+    new_process->last_executed_time = -1; // ¸¶Áö¸· ½ÇÇà ½Ã°£ ÃÊ±âÈ­
+    new_process->start_time = -1; // ½ÃÀÛ ½Ã°£ ÃÊ±âÈ­
+    new_process->completion_time = -1; // ¿Ï·á ½Ã°£ ÃÊ±âÈ­
 
-    new_process->num_io_requests = rand() % (MAX_IO_REQUESTS + 1);
-    for (int i = 0; i < new_process->num_io_requests; i++) {
-        new_process->io_burst_time[i] = (rand() % max_io_burst) + 1;
-        int request_time;
-        do {
-            request_time = rand() % new_process->cpu_burst_time;
-        } while (request_time == 0 || request_time >= new_process->cpu_burst_time);
-        new_process->io_request_time[i] = request_time;
-    }
+    // I/O ¿äÃ» »ı¼º ·ÎÁ÷ Á¦°ÅµÊ
+    // new_process->num_io_requests = rand() % (MAX_IO_REQUESTS + 1); 
+    // for (int i = 0; i < new_process->num_io_requests; i++) {
+    //     new_process->io_burst_time[i] = (rand() % max_io_burst) + 1;
+    //     int request_time;
+    //     if (new_process->cpu_burst_time == 1) {
+    //         request_time = 0;
+    //     }
+    //     else {
+    //         do {
+    //             request_time = rand() % new_process->cpu_burst_time;
+    //         } while (request_time == 0); 
+    //     }
+    //     new_process->io_request_time[i] = request_time;
+    // }
 
     return new_process;
 }
 
-// ì‹œìŠ¤í…œ í™˜ê²½ ì„¤ì • í•¨ìˆ˜
+// ½Ã½ºÅÛ ¼³Á¤ ÇÔ¼ö (ÀÌÁ¦ Àü¿ª ¸Å°³º¯¼ö¸¦ ÀÚµ¿À¸·Î ¼³Á¤)
 SystemConfig* config() {
     SystemConfig* config = (SystemConfig*)malloc(sizeof(SystemConfig));
-    if (config == NULL) {
-        perror("ì‹œìŠ¤í…œ ì„¤ì • ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
-        return NULL;
-    }
+    if (!config) return NULL; // ¸Ş¸ğ¸® ÇÒ´ç ½ÇÆĞ ½Ã NULL ¹İÈ¯
 
-    config->ready_queue_capacity = INITIAL_READY_QUEUE_CAPACITY;
-    config->ready_queue_size = 0;
-    config->ready_queue = (Process**)malloc(config->ready_queue_capacity * sizeof(Process*));
-    if (config->ready_queue == NULL) {
-        perror("ì¤€ë¹„ í ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
-        free(config);
-        return NULL;
-    }
+    config->ready_queue_capacity = INITIAL_READY_QUEUE_CAPACITY; // ÁØºñ Å¥ ÃÊ±â ¿ë·® ¼³Á¤
+    config->ready_queue_size = 0; // ÁØºñ Å¥ Å©±â ÃÊ±âÈ­
+    config->ready_queue = (Process**)malloc(config->ready_queue_capacity * sizeof(Process*)); // ÁØºñ Å¥ ¸Ş¸ğ¸® ÇÒ´ç
 
-    config->waiting_queue_capacity = INITIAL_WAITING_QUEUE_CAPACITY;
-    config->waiting_queue_size = 0;
-    config->waiting_queue = (Process**)malloc(config->waiting_queue_capacity * sizeof(Process*));
-    if (config->waiting_queue == NULL) {
-        perror("ëŒ€ê¸° í ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
-        free(config->ready_queue);
-        free(config);
-        return NULL;
-    }
+    // Waiting Queue °ü·Ã ÇÊµå ÃÊ±âÈ­ Á¦°ÅµÊ
+    // config->waiting_queue_capacity = INITIAL_WAITING_QUEUE_CAPACITY;
+    // config->waiting_queue_size = 0;
+    // config->waiting_queue = (Process**)malloc(config->waiting_queue_capacity * sizeof(Process*));
 
-    srand(time(NULL));
+    // Àü¿ª ½Ã¹Ä·¹ÀÌ¼Ç ¸Å°³º¯¼ö¸¦ ÀÚµ¿À¸·Î ¼³Á¤
+    num_processes_global = 5;      // ±âº» ÇÁ·Î¼¼½º ¼ö
+    max_arrival_time_global = 15;   // ±âº» ÃÖ´ë µµÂø ½Ã°£
+    max_cpu_burst_global = 25;      // ±âº» ÃÖ´ë CPU ¹ö½ºÆ® ½Ã°£
+    max_priority_global = 5;        // ±âº» ÃÖ´ë ¿ì¼±¼øÀ§ (0-5)
+    // max_io_burst_global = 10;       // ±âº» ÃÖ´ë I/O ¹ö½ºÆ® ½Ã°£ (Á¦°ÅµÊ)
 
-    printf("ì‹œìŠ¤í…œ í™˜ê²½ ì„¤ì • ì™„ë£Œ.\n");
-    printf("  - ì´ˆê¸° ì¤€ë¹„ í ìš©ëŸ‰: %d\n", config->ready_queue_capacity);
-    printf("  - ì´ˆê¸° ëŒ€ê¸° í ìš©ëŸ‰: %d\n", config->waiting_queue_capacity);
-
+    printf("\nSystem environment configuration automatically set:\n");
+    printf("  Number of Processes: %d\n", num_processes_global);
+    printf("  Max Arrival Time: %d\n", max_arrival_time_global);
+    printf("  Max CPU Burst Time: %d\n", max_cpu_burst_global);
+    printf("  Max Priority: %d\n", max_priority_global);
+    // printf("  Max I/O Burst Time: %d\n", max_io_burst_global); // Á¦°ÅµÊ
     return config;
 }
 
-// Gantt Chart ì¶œë ¥ì„ ìœ„í•œ êµ¬ì¡°ì²´ ì •ì˜
-typedef struct {
-    int time;
-    int pid;
-} GanttUnit;
-
-// schedule í•¨ìˆ˜ ì„ ì–¸ (êµ¬í˜„ì€ ì´í›„ì— ê³„ì† ì‘ì„±)
-void schedule(Process** processes, int num_processes, SystemConfig* system, const char* algorithm, int preemptive);
-
-// ì˜ˆì‹œ ì‚¬ìš©ë²• (main í•¨ìˆ˜ëŠ” í¬í•¨í•˜ì§€ ì•ŠìŒ, í•¨ìˆ˜ ì‚¬ìš© ì˜ˆì‹œ)
-/*
-int main() {
-    // ì‹œìŠ¤í…œ í™˜ê²½ ì„¤ì • (#defineìœ¼ë¡œ ì •ì˜ëœ ìš©ëŸ‰ ì‚¬ìš©)
-    SystemConfig *system_config = config();
-
-    if (system_config == NULL) {
-        return 1; // ì„¤ì • ì‹¤íŒ¨ ì‹œ ì¢…ë£Œ
+void print_gantt_chart_formatted(int* gantt_array, int total_time_units) {
+    printf("\n  Formatted Gantt Chart:\n");
+    if (total_time_units == 0) {
+        printf("    (No execution recorded)\n"); // ½ÇÇà ±â·Ï ¾øÀ½
+        return;
     }
 
-    // í”„ë¡œì„¸ìŠ¤ ìƒì„± (ì˜ˆì‹œ: 5ê°œ í”„ë¡œì„¸ìŠ¤ ìƒì„±)
-    int num_processes_to_create = 5;
-    Process *processes[num_processes_to_create]; // ìƒì„±ëœ í”„ë¡œì„¸ìŠ¤ í¬ì¸í„°ë¥¼ ì €ì¥í•  ë°°ì—´
+    // "    CPU : "ÀÇ ±æÀÌ (°ø¹é Æ÷ÇÔ)
+    const int LABEL_PREFIX_WIDTH = 8;
 
-    printf("\ní”„ë¡œì„¸ìŠ¤ ìƒì„±:\n");
-    for (int i = 0; i < num_processes_to_create; i++) {
-        // create_process í•¨ìˆ˜ í˜¸ì¶œ (ëœë¤ ê°’ ë²”ìœ„ëŠ” ì ì ˆíˆ ì¡°ì ˆ)
-        processes[i] = create_process(i + 1, 20, 10, 5, 7, 5);
-        if (processes[i] != NULL) {
-            printf("  - í”„ë¡œì„¸ìŠ¤ %d ìƒì„±: ë„ì°© ì‹œê°„ %d, CPU ë²„ìŠ¤íŠ¸ %d, ìš°ì„ ìˆœìœ„ %d, I/O ë²„ìŠ¤íŠ¸ %d, I/O ìš”ì²­ ì‹œê°„ %d\n",
-                   processes[i]->id,
-                   processes[i]->arrival_time,
-                   processes[i]->cpu_burst_time,
-                   processes[i]->priority,
-                   processes[i]->io_burst_time,
-                   processes[i]->io_request_time);
+    // CPU ¶óÀÎ ¹öÆÛ (ÃÖ´ë °¡´ÉÇÑ ±æÀÌ·Î ÇÒ´ç)
+    // °¢ ºí·Ï "P#(duration)" ¶Ç´Â "Idle(duration)"Àº ÃÖ´ë 20ÀÚ + ±¸ºĞÀÚ '-' 1ÀÚ
+    // ÃÑ ½Ã°£ ´ÜÀ§ * (ÃÖ´ë ºí·Ï ±æÀÌ + ±¸ºĞÀÚ) + ¿©À¯ºĞ
+    char* cpu_line_buffer = (char*)malloc(total_time_units * 21 + 100);
+    if (!cpu_line_buffer) {
+        fprintf(stderr, "Error: Failed to allocate memory for cpu_line_buffer.\n");
+        return;
+    }
+    cpu_line_buffer[0] = '\0'; // ¹öÆÛ ÃÊ±âÈ­
+
+    int current_cpu_char_pos = 0; // cpu_line_buffer ³» ÇöÀç ¹®ÀÚ À§Ä¡ (Á¢µÎ»ç Á¦¿Ü)
+
+    int last_pid = -2; // ÀÌÀü ÇÁ·Î¼¼½º ID (ÃÊ±â°ªÀº À¯È¿ÇÏÁö ¾ÊÀº PID)
+
+    // CPU ¶óÀÎ ¹öÆÛ¸¦ Ã¤¿ì°í °¢ ½Ã°£ ´ÜÀ§ÀÇ ¹®ÀÚ À§Ä¡ ±â·Ï
+    for (int t = 0; t < total_time_units; t++) {
+        // ÇöÀç ½Ã°£ ´ÜÀ§ÀÇ PID
+        int current_pid_at_t = gantt_array[t];
+
+        // »õ·Î¿î ºí·ÏÀÌ ½ÃÀÛµÇ´Â °æ¿ì (ÀÌÀü PID¿Í ´Ù¸£°Å³ª Ã¹ ¹øÂ° ½Ã°£ ´ÜÀ§ÀÎ °æ¿ì)
+        if (current_pid_at_t != last_pid || t == 0) {
+            if (t > 0) { // Ã¹ ºí·ÏÀÌ ¾Æ´Ï¸é ±¸ºĞÀÚ Ãß°¡
+                strcat(cpu_line_buffer, "-");
+                current_cpu_char_pos++;
+            }
+
+            last_pid = current_pid_at_t;
+
+            // ÇöÀç ºí·ÏÀÇ Áö¼Ó ½Ã°£ °è»ê
+            int block_duration = 0;
+            for (int k = t; k < total_time_units && gantt_array[k] == last_pid; k++) {
+                block_duration++;
+            }
+
+            char block_str[20]; // "P#(duration)" ¶Ç´Â "Idle(duration)" ¹®ÀÚ¿­
+            int block_len;
+            if (last_pid != -1) { // ÇÁ·Î¼¼½º ½ÇÇà ºí·Ï
+                block_len = snprintf(block_str, sizeof(block_str), "P%d(%d)", last_pid, block_duration);
+            }
+            else { // À¯ÈŞ ºí·Ï
+                block_len = snprintf(block_str, sizeof(block_str), "Idle(%d)", block_duration);
+            }
+
+            strcat(cpu_line_buffer, block_str);
+            current_cpu_char_pos += block_len;
+
+            // ÇöÀç t¸¦ ºí·ÏÀÇ ³¡À¸·Î ÀÌµ¿ÇÏ¿© ´ÙÀ½ ¹İº¹¿¡¼­ »õ ºí·ÏÀ» ½ÃÀÛÇÏµµ·Ï ÇÔ
+            // (ÀÌ¹Ì Ã³¸®ÇÑ ½Ã°£ ´ÜÀ§´Â °Ç³Ê¶Ù±â À§ÇÔ)
+            t += block_duration - 1;
+        }
+    }
+    cpu_line_buffer[current_cpu_char_pos] = '\0';
+
+    // Æ÷¸ËµÈ °£Æ® Â÷Æ® Ãâ·Â
+    // Time ¶óÀÎ Ãâ·Â ÄÚµå¸¦ Á¦°ÅÇß½À´Ï´Ù.
+    printf("    CPU : %s\n", cpu_line_buffer);
+
+    // ÇÒ´çµÈ ¸Ş¸ğ¸® ÇØÁ¦
+    free(cpu_line_buffer);
+}
+
+
+// ½ºÄÉÁÙ¸µ ÇÔ¼ö
+void schedule(Process** processes_arr, int num_processes_arr, const char* algorithm, int preemptive, float* avg_tat, float* avg_wt) {
+    int time = 0, completed = 0;
+    long total_turnaround_time = 0, total_waiting_time = 0; // ¿À¹öÇÃ·Î¿ì ¹æÁö¸¦ À§ÇØ long »ç¿ë
+    int gantt_capacity = 1000; // ÃÊ±â °£Æ® Â÷Æ® ¿ë·®
+    int gantt_size = 0; // ±â·ÏµÈ ½ÇÁ¦ ½Ã°£ ´ÜÀ§ ¼ö
+    int* gantt_pid = malloc(gantt_capacity * sizeof(int)); // °¢ ½Ã°£ ´ÜÀ§¿¡ ½ÇÇà ÁßÀÎ ÇÁ·Î¼¼½º PID¸¦ ÀúÀåÇÒ ¹è¿­
+
+    if (!gantt_pid) {
+        fprintf(stderr, "Error: Failed to allocate memory for gantt_pid.\n"); // ¿À·ù: gantt_pid ¸Ş¸ğ¸® ÇÒ´ç¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+        return;
+    }
+
+    // °¢ ½Ã¹Ä·¹ÀÌ¼Ç ½ÃÀÛ Àü ÇÁ·Î¼¼½º »óÅÂ ÃÊ±âÈ­
+    for (int i = 0; i < num_processes_arr; i++) {
+        processes_arr[i]->remaining_cpu_time = processes_arr[i]->cpu_burst_time;
+        // I/O °ü·Ã ÃÊ±âÈ­ Á¦°ÅµÊ
+        // processes_arr[i]->io_index = 0;
+        // processes_arr[i]->io_remaining_time = 0;
+        processes_arr[i]->last_executed_time = -1;
+        processes_arr[i]->start_time = -1;
+        processes_arr[i]->completion_time = -1;
+        processes_arr[i]->state = NEW; // ¸ğµç ÇÁ·Î¼¼½º¸¦ NEW »óÅÂ·Î ÃÊ±âÈ­
+    }
+
+    // Round RobinÀ» À§ÇÑ Á¤Àû º¯¼ö (ÇÔ¼ö È£Ãâ °£¿¡ »óÅÂ À¯Áö¸¦ À§ÇÔ)
+    static int rr_index_static = 0; // ÀÌ º¯¼ö´Â ÇÔ¼ö È£Ãâ °£¿¡ °ªÀ» À¯ÁöÇØ¾ß ÇÕ´Ï´Ù.
+    if (strcmp(algorithm, "RR") == 0) {
+        rr_index_static = 0; // RR ½Ã¹Ä·¹ÀÌ¼Ç ½ÃÀÛ ½Ã ÀÎµ¦½º ÃÊ±âÈ­
+    }
+
+
+    while (completed < num_processes_arr) {
+        // I/O Ã³¸® ¹× WAITING -> READY ÀüÈ¯ ·ÎÁ÷ Á¦°ÅµÊ
+        /*
+        for (int i = 0; i < num_processes_arr; i++) {
+            Process* p = processes_arr[i];
+            if (p->state == WAITING) {
+                p->io_remaining_time--;
+                if (p->io_remaining_time <= 0) {
+                    p->state = READY;
+                }
+            }
+        }
+        */
+
+        // NEW -> READY ÀüÈ¯ (µµÂø ½Ã°£ ±âÁØ)
+        for (int i = 0; i < num_processes_arr; i++) {
+            Process* p = processes_arr[i];
+            if (p->state == NEW && p->arrival_time <= time) {
+                p->state = READY;
+            }
+        }
+
+        // ½ÇÇàÇÒ ÇÁ·Î¼¼½º ¼±ÅÃ
+        Process* selected = NULL;
+
+        // Ready »óÅÂÀÇ ÇÁ·Î¼¼½ºµé Áß¿¡¼­ ¼±ÅÃ (RR Á¦¿Ü)
+        if (strcmp(algorithm, "RR") != 0) {
+            for (int i = 0; i < num_processes_arr; i++) {
+                Process* p = processes_arr[i];
+                if (p->state == READY) {
+                    if (selected == NULL) {
+                        selected = p;
+                    }
+                    else {
+                        if (strcmp(algorithm, "FCFS") == 0) {
+                            if (p->arrival_time < selected->arrival_time) {
+                                selected = p;
+                            }
+                        }
+                        else if (strcmp(algorithm, "SJF") == 0) {
+                            if (p->remaining_cpu_time < selected->remaining_cpu_time) {
+                                selected = p;
+                            }
+                        }
+                        else if (strcmp(algorithm, "PRIORITY") == 0) {
+                            // ³·Àº ¿ì¼±¼øÀ§ ¼ıÀÚ°¡ ³ôÀº ¿ì¼±¼øÀ§¶ó°í °¡Á¤
+                            if (p->priority < selected->priority) {
+                                selected = p;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else { // ¶ó¿îµå ·Îºó ¾Ë°í¸®Áò Ã³¸® (¼±ÅÃ ·ÎÁ÷)
+            selected = NULL;
+            int initial_rr_index = rr_index_static;
+            int found_rr = 0;
+
+            do {
+                if (processes_arr[rr_index_static]->state == READY) {
+                    selected = processes_arr[rr_index_static];
+                    found_rr = 1;
+                    break;
+                }
+                rr_index_static = (rr_index_static + 1) % num_processes_arr;
+            } while (rr_index_static != initial_rr_index); // ¸ğµç ÇÁ·Î¼¼½º¸¦ ÇÑ ¹ÙÄû µ¹¾Ò´ÂÁö È®ÀÎ
+
+            if (!found_rr) { // Ready Queue¿¡ ½ÇÇàÇÒ ÇÁ·Î¼¼½º°¡ ¾øÀ¸¸é
+                time++;
+                // °£Æ® Â÷Æ®¿ë À¯ÈŞ ½Ã°£ ±â·Ï
+                if (gantt_size >= gantt_capacity) { // ÇÊ¿ä½Ã ÀçÇÒ´ç
+                    gantt_capacity *= 2;
+                    gantt_pid = realloc(gantt_pid, gantt_capacity * sizeof(int));
+                    if (!gantt_pid) { fprintf(stderr, "Error: Reallocation failed.\n"); return; } // ¿À·ù: ÀçÇÒ´ç ½ÇÆĞ.
+                }
+                gantt_pid[gantt_size++] = -1; // -1Àº À¯ÈŞ »óÅÂ¸¦ ³ªÅ¸³¿
+                if (time > gantt_capacity * num_processes_arr * 2) { // ¾ÈÀü ÀåÄ¡
+                    fprintf(stderr, "Warning: Simulation time exceeded safety limit. Breaking.\n"); // °æ°í: ½Ã¹Ä·¹ÀÌ¼Ç ½Ã°£ÀÌ ¾ÈÀü ÇÑµµ¸¦ ÃÊ°úÇß½À´Ï´Ù. Áß´ÜÇÕ´Ï´Ù.
+                    break;
+                }
+                continue; // ´ÙÀ½ ½Ã°£ ´ÜÀ§·Î ÀÌµ¿
+            }
+        }
+
+
+        if (selected == NULL) { // ½ÇÇàÇÒ ÇÁ·Î¼¼½º°¡ ¾øÀ¸¸é (¸ğµÎ TERMINATED »óÅÂ)
+            time++;
+            // °£Æ® Â÷Æ®¿ë À¯ÈŞ ½Ã°£ ±â·Ï
+            if (gantt_size >= gantt_capacity) { // ÇÊ¿ä½Ã ÀçÇÒ´ç
+                gantt_capacity *= 2;
+                gantt_pid = realloc(gantt_pid, gantt_capacity * sizeof(int));
+                if (!gantt_pid) { fprintf(stderr, "Error: Reallocation failed.\n"); return; } // ¿À·ù: ÀçÇÒ´ç ½ÇÆĞ.
+            }
+            gantt_pid[gantt_size++] = -1; // -1Àº À¯ÈŞ »óÅÂ¸¦ ³ªÅ¸³¿
+            if (time > gantt_capacity * num_processes_arr * 2) { // ¾ÈÀü ÀåÄ¡
+                fprintf(stderr, "Warning: Simulation time exceeded safety limit. Breaking.\n"); // °æ°í: ½Ã¹Ä·¹ÀÌ¼Ç ½Ã°£ÀÌ ¾ÈÀü ÇÑµµ¸¦ ÃÊ°úÇß½À´Ï´Ù. Áß´ÜÇÕ´Ï´Ù.
+                break;
+            }
+            continue; // ´ÙÀ½ ½Ã°£ ´ÜÀ§·Î ÀÌµ¿
+        }
+
+        if (selected->start_time == -1) {
+            selected->start_time = time;
+        }
+        selected->state = RUNNING;
+
+
+        int execute_duration = 1; // ±âº» ½ÇÇà ½Ã°£Àº 1 ½Ã°£ ´ÜÀ§
+        if (strcmp(algorithm, "RR") == 0) {
+            execute_duration = (selected->remaining_cpu_time < TIME_QUANTUM) ? selected->remaining_cpu_time : TIME_QUANTUM;
+            // RRÀÇ °æ¿ì, ´ÙÀ½ ÇÁ·Î¼¼½ºÀÇ Â÷·Ê¸¦ ¹Ì¸® °áÁ¤
+            rr_index_static = (rr_index_static + 1) % num_processes_arr;
+        }
+        else if (!preemptive) {
+            // ºñ¼±Á¡Çü ¾Ë°í¸®ÁòÀº ÇÑ ¹ø ¼±ÅÃµÇ¸é ¿Ï·áµÉ ¶§±îÁö ½ÇÇà (I/O ¾øÀ¸¹Ç·Î ³²Àº ½Ã°£ ¸ğµÎ ½ÇÇà)
+            execute_duration = selected->remaining_cpu_time;
+            // I/O ¿äÃ» °ü·Ã ·ÎÁ÷ Á¦°ÅµÊ
+        }
+
+        // ÇÁ·Î¼¼½º ½ÇÇà (execute_duration ¸¸Å­)
+        for (int t_unit = 0; t_unit < execute_duration; t_unit++) {
+            if (gantt_size >= gantt_capacity) { // ÇÊ¿ä½Ã ÀçÇÒ´ç
+                gantt_capacity *= 2;
+                gantt_pid = realloc(gantt_pid, gantt_capacity * sizeof(int));
+                if (!gantt_pid) { fprintf(stderr, "Error: Reallocation failed.\n"); return; } // ¿À·ù: ÀçÇÒ´ç ½ÇÆĞ.
+            }
+            gantt_pid[gantt_size++] = selected->id; // °£Æ® Â÷Æ®¿ë ½ÇÇà ÇÁ·Î¼¼½º ±â·Ï
+
+            selected->remaining_cpu_time--;
+            time++;
+
+            // I/O ¿äÃ» Ã³¸® ·ÎÁ÷ Á¦°ÅµÊ
+            /*
+            if (selected->io_index < selected->num_io_requests &&
+                (selected->cpu_burst_time - selected->remaining_cpu_time) == selected->io_request_time[selected->io_index]) {
+                selected->io_remaining_time = selected->io_burst_time[selected->io_index];
+                selected->state = WAITING;
+                selected->io_index++;
+                break; // I/O ¿äÃ» ¹ß»ı ½Ã ÇöÀç ½ÇÇà Áß´Ü
+            }
+            */
+
+            // ÇÁ·Î¼¼½º Á¾·á
+            if (selected->remaining_cpu_time == 0) {
+                selected->completion_time = time;
+                selected->state = TERMINATED;
+                completed++;
+                break; // ÇÁ·Î¼¼½º ¿Ï·á ½Ã ÇöÀç ½ÇÇà Áß´Ü
+            }
+
+            // ¼±Á¡Çü ¾Ë°í¸®Áò¿¡¼­ ¼±Á¡ È®ÀÎ
+            if (preemptive && (strcmp(algorithm, "SJF") == 0 || strcmp(algorithm, "PRIORITY") == 0)) {
+                Process* potential_preemptor = NULL;
+                for (int j = 0; j < num_processes_arr; j++) {
+                    Process* p_check = processes_arr[j];
+                    if (p_check->state == NEW && p_check->arrival_time <= time) { // »õ·Î µµÂøÇÑ ÇÁ·Î¼¼½º READY·Î ÀüÈ¯
+                        p_check->state = READY;
+                    }
+                    if (p_check->state == READY) {
+                        if (potential_preemptor == NULL) {
+                            potential_preemptor = p_check;
+                        }
+                        else {
+                            if (strcmp(algorithm, "SJF") == 0) {
+                                if (p_check->remaining_cpu_time < selected->remaining_cpu_time) { // selected¿Í ºñ±³
+                                    potential_preemptor = p_check;
+                                }
+                            }
+                            else if (strcmp(algorithm, "PRIORITY") == 0) {
+                                // ³·Àº ¿ì¼±¼øÀ§ ¼ıÀÚ°¡ ³ôÀº ¿ì¼±¼øÀ§¶ó°í °¡Á¤
+                                if (p_check->priority < selected->priority) { // selected¿Í ºñ±³
+                                    potential_preemptor = p_check;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (potential_preemptor != NULL && potential_preemptor->id != selected->id) {
+                    if ((strcmp(algorithm, "SJF") == 0 && potential_preemptor->remaining_cpu_time < selected->remaining_cpu_time) ||
+                        (strcmp(algorithm, "PRIORITY") == 0 && potential_preemptor->priority < selected->priority)) {
+                        selected->state = READY; // ÇöÀç ÇÁ·Î¼¼½º¸¦ READY·Î µÇµ¹¸²
+                        goto preempt_break; // ³»ºÎ ·çÇÁ¸¦ ºüÁ®³ª°¡ ´ÙÀ½ ½ºÄÉÁÙ¸µ »çÀÌÅ¬·Î ÀÌµ¿
+                    }
+                }
+            }
+        }
+    preempt_break:; // ¼±Á¡ ¹ß»ı ½Ã Á¡ÇÁ ÁöÁ¡
+
+        // ÇöÀç ¼±ÅÃµÈ ÇÁ·Î¼¼½º°¡ ¿Ï·áµÇÁö ¾Ê¾Ò°í I/O ´ë±â »óÅÂµµ ¾Æ´Ï¸é ´Ù½Ã READY·Î
+        // I/O ´ë±â »óÅÂ°¡ ¾øÀ¸¹Ç·Î Á¶°ÇÀÌ °£¼ÒÈ­µÊ
+        if (selected != NULL && selected->state == RUNNING) {
+            selected->state = READY; // ÇöÀç ½ÇÇà ÁßÀÎ ÇÁ·Î¼¼½º¸¦ Ready·Î µÇµ¹¸²
+        }
+
+        if (time > gantt_capacity * num_processes_arr * 2) { // ¾ÈÀü ÀåÄ¡: °úµµÇÏ°Ô ±ä ½Ã¹Ä·¹ÀÌ¼Ç ¹æÁö
+            fprintf(stderr, "Warning: Simulation time exceeded safety limit. Breaking.\n");
+            break;
         }
     }
 
-    // ìƒì„±ëœ í”„ë¡œì„¸ìŠ¤ ë° ì‹œìŠ¤í…œ ì„¤ì • ë©”ëª¨ë¦¬ í•´ì œ (ì‹¤ì œ ì‹œë®¬ë ˆì´ì…˜ ì¢…ë£Œ ì‹œì ì— ìˆ˜í–‰)
-    for (int i = 0; i < num_processes_to_create; i++) {
+    // TAT, WT °è»ê
+    int actual_completed_count = 0;
+    for (int i = 0; i < num_processes_arr; i++) {
+        if (processes_arr[i]->state == TERMINATED) {
+            int tat = processes_arr[i]->completion_time - processes_arr[i]->arrival_time;
+            // WT = TAT - ÃÑ CPU ¹ö½ºÆ® ½Ã°£ (I/O ½Ã°£Àº °í·ÁÇÏÁö ¾ÊÀ½)
+            int wt = tat - processes_arr[i]->cpu_burst_time;
+
+            if (wt < 0) wt = 0; // ´ë±â ½Ã°£Àº À½¼ö°¡ µÉ ¼ö ¾øÀ½
+
+            total_turnaround_time += tat;
+            total_waiting_time += wt;
+            actual_completed_count++;
+        }
+    }
+
+    if (actual_completed_count > 0) {
+        *avg_tat = (float)total_turnaround_time / actual_completed_count;
+        *avg_wt = (float)total_waiting_time / actual_completed_count;
+    }
+    else {
+        *avg_tat = 0.0f;
+        *avg_wt = 0.0f;
+    }
+
+
+    // »õ·Î¿î Çü½ÄÈ­µÈ ÇÔ¼ö¸¦ »ç¿ëÇÏ¿© °£Æ® Â÷Æ® Ãâ·Â
+    print_gantt_chart_formatted(gantt_pid, gantt_size);
+
+    free(gantt_pid);
+}
+
+// Æò°¡ ÇÔ¼ö
+void evaluate(Process** original_processes, int num_processes) {
+    const char* algorithms[] = { "FCFS", "SJF", "SJF", "PRIORITY", "PRIORITY", "RR" };
+    int preemptives[] = { 0, 0, 1, 0, 1, 1 }; // 0: ºñ¼±Á¡Çü, 1: ¼±Á¡Çü
+    const char* names[] = { "FCFS", "SJF (NP)", "SJF (P)", "PRIORITY (NP)", "PRIORITY (P)", "RR" };
+
+    printf("\n===== Algorithm Performance Evaluation =====\n"); // ===== ¾Ë°í¸®Áò ¼º´É Æò°¡ =====
+    for (int i = 0; i < 6; i++) {
+        // ÇÁ·Î¼¼½º º¹»ç ¹× ÃÊ±âÈ­
+        Process** copy = malloc(num_processes * sizeof(Process*));
+        if (!copy) {
+            fprintf(stderr, "Error: Failed to allocate memory for process copy.\n"); // ¿À·ù: ÇÁ·Î¼¼½º º¹»çº»À» À§ÇÑ ¸Ş¸ğ¸® ÇÒ´ç¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+            return;
+        }
+        for (int j = 0; j < num_processes; j++) {
+            copy[j] = malloc(sizeof(Process));
+            if (!copy[j]) {
+                fprintf(stderr, "Error: Failed to allocate memory for process copy[%d].\n", j); // ¿À·ù: ÇÁ·Î¼¼½º º¹»çº»[%d]À» À§ÇÑ ¸Ş¸ğ¸® ÇÒ´ç¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+                // ÀÌ¹Ì ÇÒ´çµÈ ¸Ş¸ğ¸® Á¤¸®
+                for (int k = 0; k < j; k++) free(copy[k]);
+                free(copy);
+                return;
+            }
+            memcpy(copy[j], original_processes[j], sizeof(Process));
+            // º¹»çµÈ ÇÁ·Î¼¼½ºÀÇ »óÅÂ ÃÊ±âÈ­
+            copy[j]->remaining_cpu_time = copy[j]->cpu_burst_time;
+            // I/O °ü·Ã ÇÊµå ÃÊ±âÈ­ Á¦°ÅµÊ
+            // copy[j]->io_index = 0;
+            // copy[j]->io_remaining_time = 0;
+            copy[j]->last_executed_time = -1;
+            copy[j]->start_time = -1;
+            copy[j]->completion_time = -1;
+            copy[j]->state = NEW; // º¹»çµÈ ÇÁ·Î¼¼½ºµµ NEW »óÅÂ·Î ½ÃÀÛ
+        }
+
+        float avg_tat = 0, avg_wt = 0;
+        printf("\n[%s] Results:\n", names[i]); // [%s] °á°ú:
+        schedule(copy, num_processes, algorithms[i], preemptives[i], &avg_tat, &avg_wt);
+        printf("Average Turnaround Time = %.2f, Average Waiting Time = %.2f\n", avg_tat, avg_wt); // Æò±Õ Turnaround Time = %.2f, Æò±Õ Waiting Time = %.2f
+
+        for (int j = 0; j < num_processes; j++) free(copy[j]);
+        free(copy);
+    }
+}
+
+int main() {
+    // 1. ½Ã¹Ä·¹ÀÌÅÍ ¼³Á¤ (Config() ÇÔ¼ö¸¦ ÅëÇÑ ÀÚµ¿ ¼³Á¤)
+    printf("===== CPU Scheduling Simulator Starting =====\n"); // ===== CPU ½ºÄÉÁÙ¸µ ½Ã¹Ä·¹ÀÌÅÍ ½ÃÀÛ =====
+    SystemConfig* sys_config = config(); // config È£ÃâÇÏ¿© Àü¿ª ¸Å°³º¯¼ö ÀÚµ¿ ¼³Á¤
+    if (!sys_config) {
+        fprintf(stderr, "Error: Failed to initialize system configuration.\n"); // ¿À·ù: ½Ã½ºÅÛ ¼³Á¤ ÃÊ±âÈ­¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+        return 1;
+    }
+    // SystemConfig ±¸Á¶Ã¼°¡ ´õ ÀÌ»ó »ç¿ëµÇÁö ¾ÊÀ¸¸é ÇØÁ¦
+    // Âü°í: sys_config ³»ºÎÀÇ Å¥´Â schedule/evaluate¿¡¼­ »ç¿ëµÇÁö ¾ÊÀ¸¹Ç·Î,
+    // ¿©±â¼­ ÇØÁ¦ÇÏÁö ¾ÊÀ¸¸é ±â¼úÀûÀ¸·Î ¸Ş¸ğ¸® ´©¼ö°¡ ¹ß»ıÇÕ´Ï´Ù.
+    // ÀÌ ½Ã¹Ä·¹ÀÌ¼Ç ·ÎÁ÷¿¡¼­´Â Áß¿äÇÏÁö ¾Ê½À´Ï´Ù.
+    free(sys_config->ready_queue);
+    // free(sys_config->waiting_queue); // Á¦°ÅµÊ
+    free(sys_config);
+
+
+    // 2. ÇÁ·Î¼¼½º »ı¼º
+    srand(time(NULL)); // ³­¼ö »ı¼º±â ½Ãµå ¼³Á¤ (ÇÑ ¹ø¸¸)
+    Process** processes = (Process**)malloc(num_processes_global * sizeof(Process*)); // main ÇÔ¼ö ³»¿¡¼­ processes ¼±¾ğ
+    if (!processes) {
+        fprintf(stderr, "Error: Failed to allocate memory for process array.\n"); // ¿À·ù: ÇÁ·Î¼¼½º ¹è¿­ ¸Ş¸ğ¸® ÇÒ´ç¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+        return 1;
+    }
+
+    printf("\n===== Generated Process Information =====\n"); // ===== »ı¼ºµÈ ÇÁ·Î¼¼½º Á¤º¸ =====
+    for (int i = 0; i < num_processes_global; i++) {
+        // create_process È£Ãâ ½Ã max_io_burst_global ÀÎÀÚ Á¦°Å
+        processes[i] = create_process(i, max_arrival_time_global, max_cpu_burst_global, max_priority_global /* , max_io_burst_global Á¦°ÅµÊ */);
+        if (!processes[i]) {
+            fprintf(stderr, "Error: Failed to create process P%d.\n", i); // ¿À·ù: ÇÁ·Î¼¼½º P%d »ı¼º¿¡ ½ÇÆĞÇß½À´Ï´Ù.
+            // ÀÌÀü¿¡ ÇÒ´çµÈ ¸Ş¸ğ¸® ÇØÁ¦
+            for (int j = 0; j < i; j++) free(processes[j]);
+            free(processes);
+            return 1;
+        }
+        printf("PID: %d, Arrival Time: %d, CPU Burst: %d, Priority: %d\n", // I/O Á¤º¸ Ãâ·Â Á¦°Å
+            processes[i]->id, processes[i]->arrival_time, processes[i]->cpu_burst_time, processes[i]->priority);
+        // I/O ¿äÃ» Á¤º¸ Ãâ·Â ·çÇÁ Á¦°Å
+        /*
+        for (int k = 0; k < processes[i]->num_io_requests; k++) {
+            printf("  I/O #%d: Burst %d, Request Time %d\n", k + 1, processes[i]->io_burst_time[k], processes[i]->io_request_time[k]);
+        }
+        */
+    }
+
+    // 3. ½ºÄÉÁÙ¸µ ¾Ë°í¸®Áò Æò°¡
+    evaluate(processes, num_processes_global);
+
+    // 4. ¸Ş¸ğ¸® ÇØÁ¦
+    for (int i = 0; i < num_processes_global; i++) {
         free(processes[i]);
     }
-    // íì— ì¶”ê°€ëœ í”„ë¡œì„¸ìŠ¤ê°€ ìˆë‹¤ë©´ í•´ë‹¹ í”„ë¡œì„¸ìŠ¤ ë©”ëª¨ë¦¬ë„ í•´ì œí•´ì•¼ í•¨ (ì—¬ê¸°ì„œëŠ” ì˜ˆì‹œì´ë¯€ë¡œ ìƒëµ)
-    free(system_config->ready_queue);
-    free(system_config->waiting_queue);
-    free(system_config);
+    free(processes);
+
+    printf("\nCPU Scheduling Simulator finished.\n"); // CPU ½ºÄÉÁÙ¸µ ½Ã¹Ä·¹ÀÌÅÍ Á¾·á.
 
     return 0;
 }
-*/
